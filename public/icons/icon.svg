@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="mastering-studio-wasm">
+  <rect width="512" height="512" rx="88" fill="#f8f4ec"/>
+  <path d="M104 326c44-3 45-137 88-140 41-3 38 158 82 155 38-3 37-116 76-118 28-1 34 54 58 63" fill="none" stroke="#006d77" stroke-width="32" stroke-linecap="round"/>
+  <path d="M96 374h320" stroke="#161616" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="192" cy="186" r="23" fill="#e85d4f"/>
+  <circle cx="350" cy="223" r="23" fill="#d99a2b"/>
+</svg>

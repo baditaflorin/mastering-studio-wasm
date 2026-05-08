@@ -1,70 +1,21 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>mastering-studio-wasm</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
       content="Browser-based automatic audio mastering with Web Audio, EBU R128 loudness analysis, and FFmpeg WASM export."
     />
-    <style>
-      :root {
-        color: #181818;
-        background: #f7f3ec;
-        font-family:
-          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-          "Segoe UI", sans-serif;
-      }
-
-      body {
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        margin: 0;
-      }
-
-      main {
-        width: min(680px, calc(100vw - 32px));
-      }
-
-      h1 {
-        font-size: clamp(2rem, 6vw, 4rem);
-        line-height: 1;
-        margin: 0 0 16px;
-      }
-
-      p {
-        color: #444;
-        font-size: 1.1rem;
-        line-height: 1.6;
-      }
-
-      a {
-        color: #006d77;
-        font-weight: 700;
-      }
-    </style>
+    <meta name="theme-color" content="#f8f4ec" />
+    <link rel="icon" href="/mastering-studio-wasm/icons/icon.svg" />
+    <link rel="manifest" href="/mastering-studio-wasm/manifest.webmanifest" />
+    <title>mastering-studio-wasm</title>
+    <script type="module" crossorigin src="/mastering-studio-wasm/assets/index-B3X3Laiy.js"></script>
+    <link rel="modulepreload" crossorigin href="/mastering-studio-wasm/assets/vendor-CIw7t4Uy.js">
+    <link rel="stylesheet" crossorigin href="/mastering-studio-wasm/assets/index-CW_u2kmq.css">
   </head>
   <body>
-    <main>
-      <h1>mastering-studio-wasm</h1>
-      <p>
-        GitHub Pages is enabled. The full browser mastering app will replace
-        this bootstrap page in the next commits.
-      </p>
-      <p>
-        Repository:
-        <a href="https://github.com/baditaflorin/mastering-studio-wasm"
-          >https://github.com/baditaflorin/mastering-studio-wasm</a
-        >
-      </p>
-      <p>
-        Support:
-        <a href="https://www.paypal.com/paypalme/florinbadita"
-          >https://www.paypal.com/paypalme/florinbadita</a
-        >
-      </p>
-    </main>
+    <div id="root"></div>
   </body>
 </html>

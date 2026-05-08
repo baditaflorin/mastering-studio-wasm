@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+set -eu
+
+echo 'No generated code to refresh for Mode A.'

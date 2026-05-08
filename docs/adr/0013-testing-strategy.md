@@ -10,7 +10,7 @@ Audio DSP logic needs deterministic tests. The UI needs a fast smoke path.
 
 ## Decision
 
-Use Vitest for unit tests, Testing Library where component coverage is useful, and Playwright for one browser happy path. `make test` runs unit tests. `make smoke` builds the Pages output, serves it at the GitHub Pages base path, and runs Playwright.
+Use Vitest for unit tests and Playwright for one browser happy path. `make test` runs unit tests. `make smoke` builds the Pages output, serves it at the GitHub Pages base path, and runs Playwright.
 
 ## Consequences
 

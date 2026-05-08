@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    background:
+      linear-gradient(90deg, rgba(0, 109, 119, 0.08) 1px, transparent 1px),
+      linear-gradient(0deg, rgba(232, 93, 79, 0.07) 1px, transparent 1px), #f8f4ec;
+    background-size: 48px 48px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer components {
+  .primary-button {
+    @apply inline-flex min-h-10 items-center gap-2 rounded-md bg-ink px-4 py-2 text-sm font-bold text-white transition hover:bg-neutral-800 disabled:cursor-not-allowed disabled:bg-neutral-400;
+  }
+
+  .secondary-button {
+    @apply inline-flex min-h-10 items-center gap-2 rounded-md border border-neutral-300 bg-white px-4 py-2 text-sm font-bold text-ink transition hover:border-teal disabled:cursor-not-allowed disabled:bg-neutral-100 disabled:text-neutral-400;
+  }
+
+  .icon-link {
+    @apply inline-flex min-h-9 items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-bold text-ink transition hover:border-teal hover:text-teal;
+  }
+}
