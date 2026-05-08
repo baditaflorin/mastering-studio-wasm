@@ -10,8 +10,7 @@ const generatedPaths = [
   'docs/index.html',
   'docs/manifest.webmanifest',
   'docs/sw.js',
-  'docs/vendor',
-  'docs/version.json'
+  'docs/vendor'
 ];
 
 for (const generatedPath of generatedPaths) {
