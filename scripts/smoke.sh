@@ -4,7 +4,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 PREVIEW_ROOT="$ROOT/.tmp/smoke-pages"
 APP_ROOT="$PREVIEW_ROOT/mastering-studio-wasm"
-PORT="${PORT:-4173}"
+PORT="${PORT:-}"
 PID=""
 
 cleanup() {
@@ -15,11 +15,25 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$ROOT"
-npm run build
+make build VERSION="${VERSION:-0.1.0}" COMMIT="${COMMIT:-dev}"
 
 rm -rf "$PREVIEW_ROOT"
 mkdir -p "$PREVIEW_ROOT"
 ln -s "$ROOT/docs" "$APP_ROOT"
+
+if [ -z "$PORT" ]; then
+  for candidate in 4173 4181 4182 4183 4184 4185 4186 4187 4188 4189; do
+    if ! lsof -ti "tcp:$candidate" >/dev/null 2>&1; then
+      PORT="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$PORT" ]; then
+  echo "No free smoke-test port found."
+  exit 1
+fi
 
 cd "$PREVIEW_ROOT"
 python3 -m http.server "$PORT" --bind 127.0.0.1 >/tmp/mastering-studio-wasm-smoke.log 2>&1 &

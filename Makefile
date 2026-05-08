@@ -40,7 +40,7 @@ test-integration:
 	@echo 'Mode A: no separate integration suite.'
 
 smoke:
-	scripts/smoke.sh
+	VERSION="$(VERSION)" COMMIT="$(COMMIT)" scripts/smoke.sh
 
 lint:
 	npm run lint
