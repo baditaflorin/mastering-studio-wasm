@@ -1,0 +1,7 @@
+{
+  "expectedClassification": "speech",
+  "expectedState": "long-form",
+  "recommendedPreset": "podcast",
+  "minConfidence": 0.7,
+  "shouldAllowMastering": true
+}

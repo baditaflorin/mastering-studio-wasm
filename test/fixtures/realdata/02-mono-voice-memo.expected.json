@@ -1,0 +1,7 @@
+{
+  "expectedClassification": "speech",
+  "expectedState": "raw",
+  "recommendedPreset": "podcast",
+  "minConfidence": 0.72,
+  "shouldAllowMastering": true
+}

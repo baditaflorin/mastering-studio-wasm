@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "speech",
+  "expectedState": "anomalous",
+  "recommendedPreset": "podcast",
+  "minConfidence": 0.64,
+  "shouldAllowMastering": true,
+  "mustIncludeAnomalies": ["dc-offset", "low-end-rumble"]
+}

@@ -1,5 +1,6 @@
 import type {
   AudioPayload,
+  MasteringExecutionContext,
   MasteringOptions,
   MasteringProgress,
   MasteringResult
@@ -9,6 +10,7 @@ export interface MasteringWorkerApi {
   masterTrack(
     input: AudioPayload,
     options: MasteringOptions,
+    context: MasteringExecutionContext,
     onProgress?: (progress: MasteringProgress) => void
   ): Promise<MasteringResult>;
 }

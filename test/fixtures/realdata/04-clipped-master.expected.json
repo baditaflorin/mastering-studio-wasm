@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "music",
+  "expectedState": "hot-master",
+  "recommendedPreset": "warm",
+  "minConfidence": 0.62,
+  "shouldAllowMastering": true,
+  "mustIncludeAnomalies": ["clipping"]
+}

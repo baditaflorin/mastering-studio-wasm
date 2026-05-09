@@ -1,0 +1,7 @@
+{
+  "expectedClassification": "music",
+  "expectedState": "dynamic",
+  "recommendedPreset": "warm",
+  "minConfidence": 0.6,
+  "shouldAllowMastering": true
+}

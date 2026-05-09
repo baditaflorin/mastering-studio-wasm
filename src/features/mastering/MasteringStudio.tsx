@@ -7,28 +7,39 @@ import {
   Music2,
   Play,
   Sparkles,
-  Upload
+  Upload,
+  XCircle
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { audioBufferToPayload, decodeAudioFile } from '../../lib/audio/browser';
+import { inferSourceProfile } from '../../lib/audio/classify';
+import { hashBytes } from '../../lib/audio/fingerprint';
 import { analyzeAudio } from '../../lib/audio/loudness';
 import { round } from '../../lib/audio/math';
-import { parseMasteringOptions, presetOptions } from '../../lib/audio/options';
+import { parseMasteringOptions } from '../../lib/audio/options';
+import { inspectAudioFile } from '../../lib/audio/preflight';
 import type {
+  ActivityLogEntry,
   AudioMetrics,
+  MasteringExecutionContext,
   MasteringOptions,
-  MasteringPreset,
   MasteringProgress,
   MasteringResult,
+  PreflightReport,
+  SourceClassification,
+  SourceProfile,
   StoredSessionSummary
 } from '../../lib/audio/types';
 import { encodeWav } from '../../lib/audio/wav';
-import { audioBufferToPayload, decodeAudioFile } from '../../lib/audio/browser';
-import { getErrorMessage } from '../../lib/errors';
+import { getErrorMessage, UserFacingError } from '../../lib/errors';
 import { getLastSession, saveLastSession } from '../../lib/storage/sessionStore';
 import { appVersion, gitCommit, paypalUrl, repositoryUrl } from '../../version';
+import { ActivityPanel } from './ActivityPanel';
+import { DebugPanel } from './DebugPanel';
 import { MetricsPanel } from './MetricsPanel';
+import { SourceInsightPanel } from './SourceInsightPanel';
+import { createMasteringJob, type MasteringJob } from './useMasteringWorker';
 import { WaveformCanvas } from './WaveformCanvas';
-import { runMasteringWorker } from './useMasteringWorker';
 
 const acceptTypes = [
   'audio/wav',
@@ -42,23 +53,43 @@ const acceptExtensions = /\.(wav|mp3|flac|aac|m4a)$/i;
 
 export function MasteringStudio() {
   const [file, setFile] = useState<File | null>(null);
+  const [inputFingerprint, setInputFingerprint] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [sourceBuffer, setSourceBuffer] = useState<AudioBuffer | null>(null);
   const [sourceMetrics, setSourceMetrics] = useState<AudioMetrics | undefined>();
-  const [options, setOptions] = useState<MasteringOptions>(presetOptions.streaming);
+  const [sourceProfile, setSourceProfile] = useState<SourceProfile | null>(null);
+  const [options, setOptions] = useState<MasteringOptions | null>(null);
   const [result, setResult] = useState<MasteringResult | null>(null);
   const [progress, setProgress] = useState<MasteringProgress | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
   const [isMastering, setIsMastering] = useState(false);
-  const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const [lastSession, setLastSession] = useState<StoredSessionSummary | undefined>();
+  const [activity, setActivity] = useState<ActivityLogEntry[]>([]);
+  const [sessionLearning, setSessionLearning] = useState<
+    Partial<Record<SourceClassification, MasteringOptions>>
+  >({});
+  const [hasPendingCorrections, setHasPendingCorrections] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const currentJobRef = useRef<MasteringJob | null>(null);
+  const cancelRequestedRef = useRef(false);
 
+  const debugVisible =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('debug') === '1';
   const sourceUrl = useObjectUrl(file);
-  const masteredWavBlob = useMemo(
-    () => (result ? encodeWav(result.mastered) : null),
-    [result]
-  );
+  const masteredWavBlob = useMemo(() => {
+    if (!result) {
+      return null;
+    }
+
+    return encodeWav(result.mastered, {
+      ...result.provenance,
+      exportedFormat: 'wav'
+    });
+  }, [result]);
   const masteredUrl = useObjectUrl(masteredWavBlob);
   const sourcePayload = useMemo(
     () => (sourceBuffer && file ? audioBufferToPayload(sourceBuffer, file.name) : null),
@@ -71,12 +102,22 @@ export function MasteringStudio() {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      currentJobRef.current?.cancel();
+    };
+  }, []);
+
   async function handleFile(nextFile: File): Promise<void> {
     setError(null);
-    setResult(null);
-    setProgress(null);
-    setExportStatus(null);
+    setStatusMessage('Inspecting the file before decode');
+    setProgress({
+      stage: 'preflight',
+      message: 'Checking file format and memory budget',
+      value: 0.08
+    });
     setIsDecoding(true);
+    addActivity('preflight', 'Preflight started', nextFile.name);
 
     try {
       if (
@@ -84,74 +125,174 @@ export function MasteringStudio() {
         !acceptTypes.includes(nextFile.type) &&
         !acceptExtensions.test(nextFile.name)
       ) {
-        throw new Error('Choose an audio file: WAV, MP3, FLAC, AAC, or M4A.');
+        throw new UserFacingError(
+          'unsupported-file',
+          'This file does not look like one of the supported audio types.',
+          'The current app accepts WAV, MP3, FLAC, AAC, and M4A.',
+          'Choose a supported audio file or export the track again from your editor.'
+        );
       }
+
+      const fileBytes = new Uint8Array(await nextFile.arrayBuffer());
+      const inspected = await inspectAudioFile(nextFile);
+      setPreflight(inspected);
+
+      if (inspected.blockingError) {
+        addActivity('error', 'Preflight blocked import', inspected.blockingError.what);
+        throw new UserFacingError(
+          inspected.blockingError.id,
+          inspected.blockingError.what,
+          inspected.blockingError.why,
+          inspected.blockingError.nextStep
+        );
+      }
+
+      setProgress({
+        stage: 'analysis',
+        message: 'Decoding audio and measuring the source',
+        value: 0.18
+      });
 
       const decoded = await decodeAudioFile(nextFile);
       const payload = audioBufferToPayload(decoded, nextFile.name);
       const metrics = analyzeAudio(payload);
+      const learnedDefaults = sessionLearning;
+      const profile = inferSourceProfile(metrics, inspected, learnedDefaults);
+      const fingerprint = hashBytes(fileBytes);
+
       setFile(nextFile);
+      setInputFingerprint(fingerprint);
       setSourceBuffer(decoded);
       setSourceMetrics(metrics);
-    } catch (decodeError) {
-      setError(getErrorMessage(decodeError));
+      setSourceProfile(profile);
+      setOptions(profile.recommendedOptions);
+      setResult(null);
+      setHasPendingCorrections(false);
+      addActivity(
+        'analysis',
+        'Source classified',
+        `${profile.classification} · ${profile.recommendedPreset} · ${profile.classificationConfidence.label} confidence`
+      );
+
+      if (profile.learningApplied) {
+        addActivity(
+          'analysis',
+          'Session learning applied',
+          `Reused your previous ${profile.classification} preference as the first guess.`
+        );
+      }
+
+      if (profile.shouldAutoMaster) {
+        setStatusMessage('Generating the first mastering guess');
+        startTransition(() => {
+          void startMasteringRun(
+            payload,
+            profile.recommendedOptions,
+            profile,
+            inspected.sourceId,
+            fingerprint,
+            'auto-master'
+          );
+        });
+      } else {
+        setStatusMessage(
+          profile.shouldBlockMastering
+            ? 'The app found a blocker before mastering.'
+            : 'The source is ready to review before you run mastering.'
+        );
+        setProgress(null);
+      }
+    } catch (nextError) {
+      setError(getErrorMessage(nextError));
+      setProgress(null);
+      setStatusMessage(null);
     } finally {
       setIsDecoding(false);
     }
   }
 
   async function handleMaster(): Promise<void> {
-    if (!sourcePayload || !file) {
+    if (
+      !sourcePayload ||
+      !sourceProfile ||
+      !options ||
+      !preflight ||
+      !inputFingerprint
+    ) {
       setError('Import audio before mastering.');
       return;
     }
 
-    setError(null);
-    setExportStatus(null);
-    setIsMastering(true);
-    setProgress({
-      stage: 'analysis',
-      message: 'Starting mastering pass',
-      value: 0
-    });
-
-    try {
-      const safeOptions = parseMasteringOptions(options);
-      const mastered = await runMasteringWorker(
-        sourcePayload,
-        safeOptions,
-        setProgress
+    if (sourceProfile.shouldBlockMastering) {
+      const blocker = sourceProfile.anomalies.find(
+        (anomaly) => anomaly.severity === 'blocker'
       );
-      setResult(mastered);
-      const summary: StoredSessionSummary = {
-        fileName: file.name,
-        updatedAt: new Date().toISOString(),
-        preset: safeOptions.preset,
-        targetLufs: safeOptions.targetLufs,
-        before: mastered.before,
-        after: mastered.after
-      };
-      setLastSession(summary);
-      await saveLastSession(summary);
-    } catch (masteringError) {
-      setError(getErrorMessage(masteringError));
-    } finally {
-      setIsMastering(false);
+      setError(
+        blocker
+          ? `${blocker.what} ${blocker.why} ${blocker.nextStep}`
+          : 'This source needs review before mastering can continue.'
+      );
+      return;
     }
+
+    setSessionLearning((current) => ({
+      ...current,
+      [sourceProfile.classification]: options
+    }));
+
+    await startMasteringRun(
+      sourcePayload,
+      options,
+      sourceProfile,
+      preflight.sourceId,
+      inputFingerprint,
+      'manual-master'
+    );
   }
 
-  function updatePreset(preset: MasteringPreset): void {
-    setOptions(presetOptions[preset]);
+  function cancelMastering(): void {
+    if (!currentJobRef.current) {
+      return;
+    }
+
+    cancelRequestedRef.current = true;
+    currentJobRef.current.cancel();
+    setIsMastering(false);
+    setProgress({
+      stage: 'cancelled',
+      message: 'Mastering cancelled. Your analyzed source is still here.',
+      value: 0
+    });
+    setStatusMessage('Mastering cancelled');
+    addActivity(
+      'cancel',
+      'Mastering cancelled',
+      'Returned to the last stable source state.'
+    );
+  }
+
+  function updatePreset(preset: MasteringOptions['preset']): void {
+    if (!options) {
+      return;
+    }
+
+    setOptions((current) => (current ? { ...current, preset } : current));
+    setHasPendingCorrections(true);
   }
 
   function updateOption<K extends keyof MasteringOptions>(
     key: K,
     value: MasteringOptions[K]
   ): void {
-    setOptions((current) => ({
-      ...current,
-      [key]: value
-    }));
+    setOptions((current) =>
+      current
+        ? {
+            ...current,
+            [key]: value
+          }
+        : current
+    );
+    setHasPendingCorrections(true);
   }
 
   function downloadWav(): void {
@@ -160,6 +301,7 @@ export function MasteringStudio() {
     }
 
     downloadBlob(masteredWavBlob, `${stripExtension(file.name)}-master.wav`);
+    addActivity('export', 'WAV exported', `${stripExtension(file.name)}-master.wav`);
   }
 
   async function downloadMp3(): Promise<void> {
@@ -167,14 +309,129 @@ export function MasteringStudio() {
       return;
     }
 
+    setIsExporting(true);
+    setStatusMessage('Encoding MP3 export');
+
     try {
       const { exportMp3 } = await import('../../lib/audio/export');
-      const mp3 = await exportMp3(result.mastered, setExportStatus);
+      const mp3 = await exportMp3(
+        result.mastered,
+        {
+          ...result.provenance,
+          exportedFormat: 'mp3'
+        },
+        setStatusMessage
+      );
       downloadBlob(mp3, `${stripExtension(file.name)}-master.mp3`);
+      addActivity('export', 'MP3 exported', `${stripExtension(file.name)}-master.mp3`);
     } catch (exportError) {
       setError(getErrorMessage(exportError));
-      setExportStatus(null);
+      addActivity('error', 'Export failed', getErrorMessage(exportError));
+    } finally {
+      setIsExporting(false);
+      setStatusMessage(null);
     }
+  }
+
+  async function startMasteringRun(
+    payload: ReturnType<typeof audioBufferToPayload>,
+    nextOptions: MasteringOptions,
+    profile: SourceProfile,
+    sourceId: string,
+    fingerprint: string,
+    mode: 'auto-master' | 'manual-master'
+  ): Promise<void> {
+    setError(null);
+    setStatusMessage(
+      mode === 'auto-master' ? 'Building the first guess' : 'Rerunning mastering'
+    );
+    setIsMastering(true);
+    cancelRequestedRef.current = false;
+    setProgress({
+      stage: 'analysis',
+      message:
+        mode === 'auto-master'
+          ? 'Preparing the first mastering pass'
+          : 'Applying your corrections',
+      value: 0
+    });
+    addActivity(
+      mode,
+      mode === 'auto-master' ? 'Auto-master started' : 'Manual rerun started',
+      `${nextOptions.preset} · target ${round(nextOptions.targetLufs, 1)} LUFS`
+    );
+
+    const context: MasteringExecutionContext = {
+      sourceId,
+      inputFingerprint: fingerprint,
+      sourceProfile: profile,
+      appVersion,
+      commit: gitCommit
+    };
+
+    const safeOptions = parseMasteringOptions(nextOptions);
+    const job = createMasteringJob(payload, safeOptions, context, (nextProgress) => {
+      setProgress(nextProgress);
+    });
+    currentJobRef.current = job;
+
+    try {
+      const mastered = await job.promise;
+      if (cancelRequestedRef.current) {
+        return;
+      }
+
+      setResult(mastered);
+      setOptions(safeOptions);
+      setSourceProfile(mastered.profile);
+      setHasPendingCorrections(false);
+      const summary: StoredSessionSummary = {
+        fileName: payload.name,
+        sourceId,
+        updatedAt: new Date().toISOString(),
+        preset: safeOptions.preset,
+        targetLufs: safeOptions.targetLufs,
+        before: mastered.before,
+        after: mastered.after,
+        classification: mastered.profile.classification
+      };
+      setLastSession(summary);
+      await saveLastSession(summary);
+      addActivity(
+        'analysis',
+        'Master ready',
+        `${round(mastered.before.integratedLufs, 1)} to ${round(mastered.after.integratedLufs, 1)} LUFS`
+      );
+      setStatusMessage('Master ready');
+    } catch (masteringError) {
+      if (cancelRequestedRef.current) {
+        return;
+      }
+
+      setError(getErrorMessage(masteringError));
+      addActivity('error', 'Mastering failed', getErrorMessage(masteringError));
+    } finally {
+      currentJobRef.current = null;
+      cancelRequestedRef.current = false;
+      setIsMastering(false);
+    }
+  }
+
+  function addActivity(
+    stage: ActivityLogEntry['stage'],
+    title: string,
+    detail: string
+  ): void {
+    setActivity((current) => [
+      {
+        id: `${Date.now()}-${current.length}-${stage}`,
+        stage,
+        title,
+        detail,
+        at: new Date().toISOString()
+      },
+      ...current
+    ]);
   }
 
   return (
@@ -242,7 +499,8 @@ export function MasteringStudio() {
                 <Upload className="mx-auto h-10 w-10 text-teal" aria-hidden="true" />
                 <h2 className="mt-4 text-2xl font-black">Import a track</h2>
                 <p className="mt-2 text-sm leading-6 text-neutral-600">
-                  WAV, MP3, FLAC, AAC, or M4A. Processing stays in this browser.
+                  WAV, MP3, FLAC, AAC, or M4A. The app now sniffs the file, classifies
+                  the source, and only auto-runs when the first guess is safe.
                 </p>
                 <div className="mt-5 flex flex-wrap justify-center gap-2">
                   <button
@@ -256,13 +514,13 @@ export function MasteringStudio() {
                     ) : (
                       <Upload className="h-4 w-4" />
                     )}
-                    {isDecoding ? 'Decoding' : 'Choose audio'}
+                    {isDecoding ? 'Inspecting' : 'Choose audio'}
                   </button>
                   {file ? (
                     <button
                       className="secondary-button"
                       onClick={handleMaster}
-                      disabled={isMastering}
+                      disabled={isMastering || !options}
                       type="button"
                     >
                       {isMastering ? (
@@ -270,7 +528,17 @@ export function MasteringStudio() {
                       ) : (
                         <Sparkles className="h-4 w-4" />
                       )}
-                      Master track
+                      {hasPendingCorrections ? 'Apply corrections' : 'Run mastering'}
+                    </button>
+                  ) : null}
+                  {isMastering ? (
+                    <button
+                      className="secondary-button border-coral/30 text-coral"
+                      onClick={cancelMastering}
+                      type="button"
+                    >
+                      <XCircle className="h-4 w-4" />
+                      Cancel
                     </button>
                   ) : null}
                 </div>
@@ -301,14 +569,14 @@ export function MasteringStudio() {
                     : 'No audio loaded'}
                 </p>
               </div>
-              {progress ? (
-                <div className="min-w-52 text-right">
-                  <p className="text-xs font-semibold uppercase text-neutral-500">
-                    {progress.stage}
-                  </p>
-                  <p className="text-sm text-neutral-700">{progress.message}</p>
-                </div>
-              ) : null}
+              <div className="min-w-52 text-right">
+                <p className="text-xs font-semibold uppercase text-neutral-500">
+                  {progress?.stage ?? 'ready'}
+                </p>
+                <p className="text-sm text-neutral-700">
+                  {progress?.message ?? statusMessage ?? 'Waiting for input'}
+                </p>
+              </div>
             </div>
             <div className="mt-4">
               <WaveformCanvas
@@ -330,6 +598,15 @@ export function MasteringStudio() {
             <AudioPanel title="Original" url={sourceUrl} />
             <AudioPanel title="Mastered" url={masteredUrl} />
           </div>
+
+          <SourceInsightPanel profile={sourceProfile} preflight={preflight} />
+          <DebugPanel
+            visible={debugVisible}
+            preflight={preflight}
+            metrics={sourceMetrics}
+            profile={sourceProfile}
+            result={result}
+          />
         </section>
 
         <aside className="space-y-5">
@@ -339,87 +616,86 @@ export function MasteringStudio() {
               <Sparkles className="h-5 w-5 text-amber" aria-hidden="true" />
             </div>
 
-            <div
-              className="mt-4 grid grid-cols-2 gap-2"
-              role="group"
-              aria-label="Mastering preset"
-            >
-              {(['streaming', 'loud', 'podcast', 'warm'] as MasteringPreset[]).map(
-                (preset) => (
-                  <button
-                    key={preset}
-                    className={`rounded-md border px-3 py-2 text-sm font-bold capitalize ${
-                      options.preset === preset
-                        ? 'border-teal bg-teal text-white'
-                        : 'border-neutral-200 bg-white text-ink hover:border-teal'
-                    }`}
-                    onClick={() => updatePreset(preset)}
-                    type="button"
-                  >
-                    {preset}
-                  </button>
-                )
-              )}
-            </div>
+            {options ? (
+              <>
+                <div
+                  className="mt-4 grid grid-cols-2 gap-2"
+                  role="group"
+                  aria-label="Mastering preset"
+                >
+                  {(
+                    [
+                      'streaming',
+                      'loud',
+                      'podcast',
+                      'warm'
+                    ] as MasteringOptions['preset'][]
+                  ).map((preset) => (
+                    <button
+                      key={preset}
+                      className={`rounded-md border px-3 py-2 text-sm font-bold capitalize ${
+                        options.preset === preset
+                          ? 'border-teal bg-teal text-white'
+                          : 'border-neutral-200 bg-white text-ink hover:border-teal'
+                      }`}
+                      onClick={() => updatePreset(preset)}
+                      type="button"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
 
-            <div className="mt-5 space-y-4">
-              <Slider
-                label="Target LUFS"
-                min={-20}
-                max={-8}
-                step={0.5}
-                value={options.targetLufs}
-                suffix="LUFS"
-                onChange={(value) => updateOption('targetLufs', value)}
-              />
-              <Slider
-                label="Intensity"
-                min={0}
-                max={1}
-                step={0.01}
-                value={options.intensity}
-                onChange={(value) => updateOption('intensity', value)}
-              />
-              <Slider
-                label="Warmth"
-                min={0}
-                max={1}
-                step={0.01}
-                value={options.warmth}
-                onChange={(value) => updateOption('warmth', value)}
-              />
-              <Slider
-                label="Stereo width"
-                min={0.65}
-                max={1.45}
-                step={0.01}
-                value={options.stereoWidth}
-                onChange={(value) => updateOption('stereoWidth', value)}
-              />
-              <Slider
-                label="Ceiling"
-                min={-3}
-                max={-0.3}
-                step={0.1}
-                value={options.ceilingDb}
-                suffix="dB"
-                onChange={(value) => updateOption('ceilingDb', value)}
-              />
-            </div>
-
-            <button
-              className="primary-button mt-5 w-full justify-center"
-              disabled={!file || isMastering}
-              onClick={handleMaster}
-              type="button"
-            >
-              {isMastering ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              {isMastering ? 'Mastering' : 'Run mastering'}
-            </button>
+                <div className="mt-5 space-y-4">
+                  <Slider
+                    label="Target LUFS"
+                    min={-20}
+                    max={-8}
+                    step={0.5}
+                    value={options.targetLufs}
+                    suffix="LUFS"
+                    onChange={(value) => updateOption('targetLufs', value)}
+                  />
+                  <Slider
+                    label="Intensity"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={options.intensity}
+                    onChange={(value) => updateOption('intensity', value)}
+                  />
+                  <Slider
+                    label="Warmth"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={options.warmth}
+                    onChange={(value) => updateOption('warmth', value)}
+                  />
+                  <Slider
+                    label="Stereo width"
+                    min={0.65}
+                    max={1.45}
+                    step={0.01}
+                    value={options.stereoWidth}
+                    onChange={(value) => updateOption('stereoWidth', value)}
+                  />
+                  <Slider
+                    label="Ceiling"
+                    min={-3}
+                    max={-0.3}
+                    step={0.1}
+                    value={options.ceilingDb}
+                    suffix="dB"
+                    onChange={(value) => updateOption('ceilingDb', value)}
+                  />
+                </div>
+              </>
+            ) : (
+              <p className="mt-4 text-sm text-neutral-600">
+                Import a source to get a recommended chain.
+              </p>
+            )}
           </section>
 
           <MetricsPanel before={sourceMetrics} after={result?.after} />
@@ -429,7 +705,7 @@ export function MasteringStudio() {
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 className="secondary-button justify-center"
-                disabled={!result}
+                disabled={!result || isExporting}
                 onClick={downloadWav}
                 type="button"
               >
@@ -438,34 +714,46 @@ export function MasteringStudio() {
               </button>
               <button
                 className="secondary-button justify-center"
-                disabled={!result}
+                disabled={!result || isExporting}
                 onClick={() => void downloadMp3()}
                 type="button"
               >
-                <Download className="h-4 w-4" />
+                {isExporting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Download className="h-4 w-4" />
+                )}
                 MP3
               </button>
             </div>
-            {exportStatus ? (
-              <p className="mt-3 text-sm text-neutral-600">{exportStatus}</p>
-            ) : null}
-            {result?.warnings.length ? (
-              <ul className="mt-3 space-y-1 text-sm text-amber-700">
-                {result.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
+            {result ? (
+              <div className="mt-4 rounded-md border border-neutral-200 bg-white p-3 text-sm">
+                <p className="font-semibold text-neutral-700">Provenance</p>
+                <p className="mt-1 text-neutral-600">
+                  Source ID: {result.provenance.sourceId}
+                </p>
+                <p className="mt-1 text-neutral-600">
+                  Input fingerprint: {result.provenance.inputFingerprint}
+                </p>
+                <p className="mt-1 text-neutral-600">
+                  Schema: {result.provenance.schemaVersion} · Options fingerprint:{' '}
+                  {result.provenance.optionsFingerprint}
+                </p>
+              </div>
             ) : null}
           </section>
+
+          <ActivityPanel entries={activity} />
 
           {lastSession ? (
             <section className="rounded-lg border border-neutral-200 bg-panel p-5 text-sm shadow-sm">
               <h2 className="font-bold">Last run</h2>
               <p className="mt-2 text-neutral-600">{lastSession.fileName}</p>
               <p className="mt-1 font-mono text-neutral-700">
-                {round(lastSession.before.integratedLufs, 1)} →{' '}
+                {round(lastSession.before.integratedLufs, 1)} to{' '}
                 {round(lastSession.after.integratedLufs, 1)} LUFS
               </p>
+              <p className="mt-1 text-neutral-500">Source ID: {lastSession.sourceId}</p>
             </section>
           ) : null}
         </aside>
@@ -473,7 +761,7 @@ export function MasteringStudio() {
 
       {error ? (
         <div
-          className="fixed bottom-4 left-1/2 z-20 w-[min(680px,calc(100vw-32px))] -translate-x-1/2 rounded-md border border-coral/30 bg-white px-4 py-3 text-sm text-coral shadow-soft"
+          className="fixed bottom-4 left-1/2 z-20 w-[min(760px,calc(100vw-32px))] -translate-x-1/2 rounded-md border border-coral/30 bg-white px-4 py-3 text-sm text-coral shadow-soft"
           role="alert"
         >
           {error}

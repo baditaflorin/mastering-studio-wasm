@@ -35,7 +35,12 @@ export function analyzeAudio(payload: AudioPayload): AudioMetrics {
     stereoCorrelation,
     brightness: tone.brightness,
     lowEnd: tone.lowEnd,
-    dcOffset
+    midrange: tone.midrange,
+    dcOffset,
+    zeroCrossingRate: computeZeroCrossingRate(payload.channels),
+    silenceRatio: computeSilenceRatio(payload.channels),
+    clippedSampleRatio: computeClippedSampleRatio(payload.channels),
+    peakDensity: computePeakDensity(payload.channels)
   };
 }
 
@@ -178,16 +183,21 @@ function computeDcOffset(channels: readonly Float32Array[]): number {
 function computeToneBalance(
   channels: readonly Float32Array[],
   sampleRate: number
-): { brightness: number; lowEnd: number } {
+): { brightness: number; lowEnd: number; midrange: number } {
   const highPass = designBiquad('highpass', sampleRate, 4200, 0.707);
   const lowPass = designBiquad('lowpass', sampleRate, 180, 0.707);
+  const midPassHigh = designBiquad('highpass', sampleRate, 250, 0.707);
+  const midPassLow = designBiquad('lowpass', sampleRate, 2400, 0.707);
   let fullPower = 0;
   let highPower = 0;
   let lowPower = 0;
+  let midPower = 0;
 
   for (const channel of channels) {
     const high = applyBiquad(channel, highPass);
     const low = applyBiquad(channel, lowPass);
+    const midHigh = applyBiquad(channel, midPassHigh);
+    const mid = applyBiquad(midHigh, midPassLow);
 
     for (let index = 0; index < channel.length; index += 1) {
       const sample = channel[index] ?? 0;
@@ -198,11 +208,81 @@ function computeToneBalance(
 
       const lowSample = low[index] ?? 0;
       lowPower += lowSample * lowSample;
+
+      const midSample = mid[index] ?? 0;
+      midPower += midSample * midSample;
     }
   }
 
   return {
     brightness: highPower / Math.max(EPSILON, fullPower),
-    lowEnd: lowPower / Math.max(EPSILON, fullPower)
+    lowEnd: lowPower / Math.max(EPSILON, fullPower),
+    midrange: midPower / Math.max(EPSILON, fullPower)
   };
+}
+
+function computeZeroCrossingRate(channels: readonly Float32Array[]): number {
+  let crossings = 0;
+  let total = 0;
+
+  for (const channel of channels) {
+    for (let index = 1; index < channel.length; index += 1) {
+      const previous = channel[index - 1] ?? 0;
+      const current = channel[index] ?? 0;
+      if ((previous >= 0 && current < 0) || (previous < 0 && current >= 0)) {
+        crossings += 1;
+      }
+      total += 1;
+    }
+  }
+
+  return crossings / Math.max(1, total);
+}
+
+function computeSilenceRatio(channels: readonly Float32Array[]): number {
+  let silentSamples = 0;
+  let total = 0;
+
+  for (const channel of channels) {
+    for (let index = 0; index < channel.length; index += 1) {
+      if (Math.abs(channel[index] ?? 0) < 1e-4) {
+        silentSamples += 1;
+      }
+      total += 1;
+    }
+  }
+
+  return silentSamples / Math.max(1, total);
+}
+
+function computeClippedSampleRatio(channels: readonly Float32Array[]): number {
+  let clippedSamples = 0;
+  let total = 0;
+
+  for (const channel of channels) {
+    for (let index = 0; index < channel.length; index += 1) {
+      if (Math.abs(channel[index] ?? 0) >= 0.985) {
+        clippedSamples += 1;
+      }
+      total += 1;
+    }
+  }
+
+  return clippedSamples / Math.max(1, total);
+}
+
+function computePeakDensity(channels: readonly Float32Array[]): number {
+  let peakSamples = 0;
+  let total = 0;
+
+  for (const channel of channels) {
+    for (let index = 0; index < channel.length; index += 1) {
+      if (Math.abs(channel[index] ?? 0) > 0.8) {
+        peakSamples += 1;
+      }
+      total += 1;
+    }
+  }
+
+  return peakSamples / Math.max(1, total);
 }

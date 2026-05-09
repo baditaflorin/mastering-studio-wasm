@@ -1,18 +1,24 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
-import type { AudioPayload } from './types';
+import { serializeProvenanceComment } from './provenance';
+import type { AudioPayload, MasteringProvenance } from './types';
 import { encodeWav } from './wav';
 
 let ffmpegPromise: Promise<FFmpeg> | null = null;
 
 export async function exportMp3(
   payload: AudioPayload,
+  provenance: MasteringProvenance,
   onStatus: (message: string) => void
 ): Promise<Blob> {
   const ffmpeg = await loadFfmpeg(onStatus);
-  const wavBlob = encodeWav(payload);
+  const wavBlob = encodeWav(payload, { ...provenance, exportedFormat: 'wav' });
   const inputName = 'master-input.wav';
   const outputName = 'master-output.mp3';
+  const metadataComment = serializeProvenanceComment({
+    ...provenance,
+    exportedFormat: 'mp3'
+  });
 
   onStatus('Preparing WAV for FFmpeg');
   await ffmpeg.writeFile(inputName, await fetchFile(wavBlob));
@@ -21,6 +27,10 @@ export async function exportMp3(
   await ffmpeg.exec([
     '-i',
     inputName,
+    '-metadata',
+    `comment=${metadataComment}`,
+    '-metadata',
+    `encoded_by=mastering-studio-wasm@${provenance.appVersion}`,
     '-codec:a',
     'libmp3lame',
     '-b:a',

@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "unknown",
+  "expectedState": "silence",
+  "recommendedPreset": "streaming",
+  "minConfidence": 0.7,
+  "shouldAllowMastering": false,
+  "mustIncludeAnomalies": ["silence"]
+}

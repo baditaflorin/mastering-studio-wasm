@@ -3,8 +3,8 @@ import { masterAudio } from '../lib/audio/dsp';
 import type { MasteringWorkerApi } from './protocol';
 
 const api: MasteringWorkerApi = {
-  async masterTrack(input, options, onProgress) {
-    const result = masterAudio(input, options, (stage, message, value) => {
+  async masterTrack(input, options, context, onProgress) {
+    const result = masterAudio(input, options, context, (stage, message, value) => {
       onProgress?.({
         stage: stage as never,
         message,

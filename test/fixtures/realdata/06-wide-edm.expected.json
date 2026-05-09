@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "music",
+  "expectedState": "wide",
+  "recommendedPreset": "loud",
+  "minConfidence": 0.58,
+  "shouldAllowMastering": true,
+  "mustIncludeAnomalies": ["wide-stereo"]
+}

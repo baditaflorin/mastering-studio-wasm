@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "music",
+  "expectedState": "multichannel",
+  "recommendedPreset": "streaming",
+  "minConfidence": 0.68,
+  "shouldAllowMastering": false,
+  "mustIncludeAnomalies": ["multichannel"]
+}

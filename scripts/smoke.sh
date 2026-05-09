@@ -35,11 +35,15 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-cd "$PREVIEW_ROOT"
-python3 -m http.server "$PORT" --bind 127.0.0.1 >/tmp/mastering-studio-wasm-smoke.log 2>&1 &
+node "$ROOT/scripts/serve-static.mjs" "$PREVIEW_ROOT" "$PORT" 127.0.0.1 >/tmp/mastering-studio-wasm-smoke.log 2>&1 &
 PID="$!"
 
-for _ in 1 2 3 4 5 6 7 8 9 10; do
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if ! kill -0 "$PID" 2>/dev/null; then
+    cat /tmp/mastering-studio-wasm-smoke.log
+    echo "Static preview server exited before smoke tests could start."
+    exit 1
+  fi
   if curl -fsS "http://127.0.0.1:$PORT/mastering-studio-wasm/" >/dev/null; then
     break
   fi

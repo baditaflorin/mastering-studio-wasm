@@ -20,8 +20,24 @@ test('masters a generated WAV on the happy path', async ({ page }) => {
   });
 
   await expect(page.getByText(/tone\.wav/)).toBeVisible();
-  await page.getByRole('button', { name: /Run mastering/ }).click();
-  await expect(page.getByText('Master ready')).toBeVisible({ timeout: 45_000 });
+  const readyText = page.getByText('Master ready').first();
+  const runButton = page.getByRole('button', {
+    name: /Run mastering|Apply corrections/
+  });
+
+  await Promise.race([
+    readyText.waitFor({ state: 'visible', timeout: 45_000 }),
+    runButton.waitFor({ state: 'visible', timeout: 10_000 }).then(async () => {
+      if (await runButton.isEnabled()) {
+        await runButton.click();
+        await readyText.waitFor({ state: 'visible', timeout: 45_000 });
+      } else {
+        await readyText.waitFor({ state: 'visible', timeout: 45_000 });
+      }
+    })
+  ]);
+
+  await expect(readyText).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole('button', { name: 'WAV' })).toBeEnabled();
 });
 

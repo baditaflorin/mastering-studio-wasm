@@ -1,6 +1,6 @@
 {
   "name": "mastering-studio-wasm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Browser-based automatic audio mastering with Web Audio, EBU R128 loudness analysis, and FFmpeg WASM export.",

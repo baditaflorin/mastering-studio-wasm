@@ -1,0 +1,7 @@
+{
+  "expectedClassification": "music",
+  "expectedState": "raw",
+  "recommendedPreset": "streaming",
+  "minConfidence": 0.68,
+  "shouldAllowMastering": true
+}

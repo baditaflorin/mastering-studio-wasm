@@ -1,9 +1,11 @@
 import { applyBiquadInPlace, applyGainInPlace, designBiquad } from './biquad';
 import { analyzeAudio } from './loudness';
 import { clamp, dbToGain, gainToDb } from './math';
+import { buildBaseProvenance } from './provenance';
 import type {
   AudioPayload,
   MasteringChain,
+  MasteringExecutionContext,
   MasteringOptions,
   MasteringResult
 } from './types';
@@ -11,6 +13,7 @@ import type {
 export function masterAudio(
   input: AudioPayload,
   options: MasteringOptions,
+  context: MasteringExecutionContext,
   onProgress: (stage: string, message: string, value: number) => void = () => undefined
 ): MasteringResult {
   onProgress('analysis', 'Analyzing loudness and tone', 0.08);
@@ -22,12 +25,23 @@ export function masterAudio(
     warnings.push('Long tracks may need extra memory in browser-based mastering.');
   }
 
+  for (const anomaly of context.sourceProfile.anomalies) {
+    if (anomaly.severity !== 'info') {
+      warnings.push(anomaly.what);
+    }
+  }
+
   onProgress('tone', 'Applying adaptive tone shaping', 0.22);
-  const chain = buildMasteringChain(before, options);
+  const chain = buildMasteringChain(before, options, context);
   applyTone(channels, input.sampleRate, chain);
 
   onProgress('dynamics', 'Balancing dynamics', 0.42);
-  applyStereoWidth(channels, options.stereoWidth);
+  applyStereoWidth(
+    channels,
+    context.sourceProfile.state === 'wide'
+      ? Math.min(options.stereoWidth, 1)
+      : options.stereoWidth
+  );
   applyCompression(channels, input.sampleRate, chain, options);
   applySaturation(channels, options);
 
@@ -70,13 +84,16 @@ export function masterAudio(
     before,
     after,
     chain,
-    warnings
+    warnings,
+    profile: context.sourceProfile,
+    provenance: buildBaseProvenance(options, context.sourceProfile, context, warnings)
   };
 }
 
 function buildMasteringChain(
   before: ReturnType<typeof analyzeAudio>,
-  options: MasteringOptions
+  options: MasteringOptions,
+  context: MasteringExecutionContext
 ): MasteringChain {
   const brightnessTarget = options.preset === 'warm' ? 0.065 : 0.085;
   const lowTarget = options.preset === 'podcast' ? 0.09 : 0.12;
@@ -86,13 +103,15 @@ function buildMasteringChain(
     -2,
     3.5
   );
-  const compressorThresholdDb = clamp(
-    before.rmsDb + 5 - options.intensity * 7,
-    -34,
-    -10
-  );
-  const compressorRatio = clamp(1.25 + options.intensity * 2.5, 1.2, 4);
-  const makeupGainDb = clamp(options.intensity * 2.5, 0, 4);
+  const saferIntensity =
+    context.sourceProfile.state === 'hot-master'
+      ? Math.min(options.intensity, 0.3)
+      : context.sourceProfile.state === 'dynamic'
+        ? Math.min(options.intensity, 0.28)
+        : options.intensity;
+  const compressorThresholdDb = clamp(before.rmsDb + 5 - saferIntensity * 7, -34, -10);
+  const compressorRatio = clamp(1.25 + saferIntensity * 2.5, 1.2, 4);
+  const makeupGainDb = clamp(saferIntensity * 2.5, 0, 4);
 
   return {
     highPassHz: options.preset === 'podcast' ? 70 : 28,

@@ -1,0 +1,8 @@
+{
+  "expectedClassification": "invalid",
+  "expectedState": "invalid",
+  "recommendedPreset": "streaming",
+  "minConfidence": 1,
+  "shouldAllowMastering": false,
+  "mustIncludeAnomalies": ["invalid-audio"]
+}
