@@ -23,6 +23,12 @@ export function MetricsPanel({ before, after }: MetricsPanelProps) {
         />
         <Metric label="Input peak" value={formatDb(before?.peakDb)} />
         <Metric label="Master peak" value={formatDb(after?.peakDb)} tone="coral" />
+        <Metric label="Input true peak" value={formatDbtp(before?.truePeakDb)} />
+        <Metric
+          label="Master true peak"
+          value={formatDbtp(after?.truePeakDb)}
+          tone="coral"
+        />
         <Metric
           label="Crest"
           value={formatDb(after?.crestFactorDb ?? before?.crestFactorDb)}
@@ -103,6 +109,10 @@ function MiniStat({
 
 function formatDb(value?: number): string {
   return Number.isFinite(value) ? `${round(value ?? 0, 1)} dB` : '-';
+}
+
+function formatDbtp(value?: number): string {
+  return Number.isFinite(value) ? `${round(value ?? 0, 1)} dBTP` : '-';
 }
 
 function formatLufs(value?: number): string {

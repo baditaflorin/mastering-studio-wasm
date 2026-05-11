@@ -1,5 +1,6 @@
 import { applyBiquad, designBiquad } from './biquad';
 import { EPSILON, gainToDb, mean, powerToLufs } from './math';
+import { computeTruePeakDb } from './truePeak';
 import type { AudioMetrics, AudioPayload } from './types';
 
 interface LoudnessBlock {
@@ -23,6 +24,7 @@ export function analyzeAudio(payload: AudioPayload): AudioMetrics {
   const tone = computeToneBalance(payload.channels, sampleRate);
   const rmsDb = gainToDb(rms);
   const peakDb = gainToDb(peak);
+  const truePeakDb = computeTruePeakDb(payload.channels);
 
   return {
     durationSeconds,
@@ -30,6 +32,7 @@ export function analyzeAudio(payload: AudioPayload): AudioMetrics {
     channelCount,
     integratedLufs,
     peakDb,
+    truePeakDb,
     rmsDb,
     crestFactorDb: peakDb - rmsDb,
     stereoCorrelation,

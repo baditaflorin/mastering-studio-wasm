@@ -2,6 +2,7 @@ import { applyBiquadInPlace, applyGainInPlace, designBiquad } from './biquad';
 import { analyzeAudio } from './loudness';
 import { clamp, dbToGain, gainToDb } from './math';
 import { buildBaseProvenance } from './provenance';
+import { enforceTruePeakCeiling } from './truePeak';
 import type {
   AudioPayload,
   MasteringChain,
@@ -64,6 +65,13 @@ export function masterAudio(
   onProgress('limiter', 'Catching peaks', 0.84);
   applyLimiter(channels, options.ceilingDb);
 
+  const truePeakResult = enforceTruePeakCeiling(channels, options.ceilingDb);
+  if (truePeakResult.trimDb < 0) {
+    warnings.push(
+      `True-peak trim of ${truePeakResult.trimDb.toFixed(2)} dB applied to honor the ${options.ceilingDb.toFixed(2)} dBTP ceiling.`
+    );
+  }
+
   const mastered = {
     name: input.name,
     sampleRate: input.sampleRate,
@@ -74,6 +82,11 @@ export function masterAudio(
   if (after.peakDb > options.ceilingDb + 0.2) {
     warnings.push(
       'Peak ceiling was approached; consider lowering intensity for this source.'
+    );
+  }
+  if (Number.isFinite(after.truePeakDb) && after.truePeakDb > options.ceilingDb + 0.1) {
+    warnings.push(
+      `True-peak still measures ${after.truePeakDb.toFixed(2)} dBTP after limiting; consider a lower ceiling.`
     );
   }
 

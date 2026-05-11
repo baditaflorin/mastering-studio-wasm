@@ -38,6 +38,7 @@ export interface AudioMetrics {
   channelCount: number;
   integratedLufs: number;
   peakDb: number;
+  truePeakDb: number;
   rmsDb: number;
   crestFactorDb: number;
   stereoCorrelation: number | null;
